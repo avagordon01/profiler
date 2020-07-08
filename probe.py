@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import bcc
-from stacks import print_stack
+import stacks
 
 def compile():
     bpf_text = """
@@ -97,6 +97,8 @@ def attach(b, binary, offset):
         cpu=-1
     )
 
+stack_counts = {}
+tick_times = []
 def report(b):
     samples = b["samples"]
     traces = b["output_traces"]
@@ -104,7 +106,11 @@ def report(b):
     for k, v in samples.items():
         print("tick {} tid {}".format(k.tick, k.tid))
         try:
-            print_stack(b, k, v, stack_traces)
+            stack, count = stacks.format_stack(b, k, v, stack_traces)
+            if stack in stack_counts:
+                stack_counts[stack] += count
+            else:
+                stack_counts[stack] = count
         except KeyError:
             pass
     for k, v in sorted(traces.items(), key=lambda kv: kv[0].tick):
