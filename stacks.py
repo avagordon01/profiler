@@ -5,20 +5,22 @@ import errno
 def stack_id_err(stack_id):
     return stack_id < 0 and stack_id != -errno.EFAULT
 
-def print_stack(b, k, v, stack_traces, need_delimiter = False, annotations = False):
+def format_stack(b, k, v, stack_traces, need_delimiter = False, annotations = False):
     user_stacks = True
     kernel_stacks = False
 
     if kernel_stacks and stack_id_err(k.kernel_stack_id):
-        print("WARNING: stack trace could not be displayed.", file=stderr)
+        #print("WARNING: stack trace could not be displayed.", file=stderr)
         if k.kernel_stack_id == -errno.ENOMEM:
-            print("Consider increasing stack storage size.", file=stderr)
-        return
+            #print("Consider increasing stack storage size.", file=stderr)
+            pass
+        raise KeyError
     if user_stacks and stack_id_err(k.user_stack_id):
-        print("WARNING: stack trace could not be displayed.", file=stderr)
+        #print("WARNING: stack trace could not be displayed.", file=stderr)
         if k.user_stack_id == -errno.ENOMEM:
-            print("Consider increasing stack storage size.", file=stderr)
-        return
+            #print("Consider increasing stack storage size.", file=stderr)
+            pass
+        raise KeyError
 
     user_stack = \
         list(stack_traces.walk(k.user_stack_id)) if user_stacks else [] 
@@ -33,4 +35,6 @@ def print_stack(b, k, v, stack_traces, need_delimiter = False, annotations = Fal
         annotation = "_[k]".encode() if annotations else ""
         line += [b"-"] if need_delimiter else []
         line += [b.ksym(addr) + annotation for addr in reversed(kernel_stack)]
-    print("{} {}".format(b";".join(line).decode('utf-8', 'replace'), v.value))
+    stack = b";".join(line).decode('utf-8', 'replace')
+    count = v.value
+    return stack, count
