@@ -108,15 +108,47 @@ def location_to_rel_address(dwarf, filename, line):
     rel_address = abs_address - subprogram_address
     return name, rel_address, abs_address
 
-def get_variable_location(dwarf, variable):
-    for cu in dwarf.iter_CUs():
-        for die in cu.iter_DIEs():
+def get_variable_location(dwarf, abs_address, cu, variable):
+    addresses = []
+    die, _ = address_to_subprogram_die(dwarf, abs_address, cu)
+    if 'DW_AT_object_pointer' in die.attributes:
+        die = cu.get_DIE_from_refaddr(
+            die.attributes['DW_AT_object_pointer'].value + cu.cu_offset
+        )
+        assert die.tag == 'DW_TAG_formal_parameter'
+
+        loc_sec_offset = die.attributes['DW_AT_location'].value
+        loc_list = dwarf.location_lists().get_location_list_at_offset(loc_sec_offset)
+        base_address = cu.get_top_DIE().attributes['DW_AT_low_pc'].value
+        loc = [loc.loc_expr for loc in loc_list if loc.begin_offset <= abs_address < loc.end_offset]
+        assert len(loc) == 1
+        loc = loc[0]
+        print('"compile" the following DWARF expression to BPF C:')
+        print(elftools.dwarf.descriptions.describe_DWARF_expr(loc, dwarf.structs, cu.cu_offset))
+
+        die = cu.get_DIE_from_refaddr(
+            die.attributes['DW_AT_type'].value + cu.cu_offset
+        )
+        assert die.tag == 'DW_TAG_pointer_type'
+        die = cu.get_DIE_from_refaddr(
+            die.attributes['DW_AT_type'].value + cu.cu_offset
+        )
+        assert die.tag == 'DW_TAG_class_type'
+        members = [
+            child
+            for child in die.iter_children()
+            if child.tag == 'DW_TAG_member' and child.attributes['DW_AT_name'].value == variable
+        ]
+        assert len(members) == 1
+        die = members[0]
+        addresses.append(die.attributes['DW_AT_data_member_location'].value)
+        return addresses
+    else:
+        for die in die.iter_children():
             if die.tag == 'DW_TAG_variable':
-                if 'DW_AT_name' in die.attributes:
-                    var = die.attributes['DW_AT_name'].value
-                    if var == b'tick':
-                        offset = die.attributes['DW_AT_location'].value
-                        return offset
+                var = die.attributes['DW_AT_name'].value
+                if var == variable:
+                    addresses.append(die.attributes['DW_AT_location'].value)
 
 if __name__ == '__main__':
     if len(sys.argv) < 4:

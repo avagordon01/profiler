@@ -2,7 +2,7 @@
 import bcc
 import stacks
 
-def compile():
+def compile(addresses):
     bpf_text = """
     #include <uapi/linux/bpf_perf_event.h>
     #include <linux/sched.h> //TASK_COMM_LEN
@@ -11,11 +11,7 @@ def compile():
     typedef u64 tick_t;
     typedef u64 time_t;
 
-    struct trace {
-        tick_t tick;
-        time_t time;
-    };
-    BPF_HASH(current_traces, tid_t, struct trace);
+    BPF_HASH(current_ticks, tid_t, tick_t);
 
     struct output_trace {
         tick_t tick;
@@ -35,41 +31,42 @@ def compile():
 
     int on_trace(struct pt_regs *ctx) {
         tid_t tid = bpf_get_current_pid_tgid();
-
-        struct trace* t = current_traces.lookup(&tid);
-        time_t current_time = bpf_ktime_get_ns();
-        if (t) {
-            time_t dt = current_time - t->time;
-
-            struct output_trace output = {};
-            output.tick = t->tick;
-            output.tid = tid;
-            output_traces.insert(&output, &dt);
-
-            t->time = current_time;
-            t->tick += 1;
-            //TODO is it safe to use this pointer?
-            //won't there be concurrent inserts to the map
-            //that will invalidate the pointer
+        tick_t tick;
+        if (true) {
+            const void* address = (const void*)ctx->r13;
+            address += """ + str(addresses[0]) + """;
+            if (bpf_probe_read_user(&tick, sizeof(tick), address) != 0) {
+                //couldn't read the variable in this trace
+                return 0;
+            }
+            current_ticks.update(&tid, &tick);
         } else {
-            struct trace t;
-            t.tick = 0;
-            t.time = current_time;
-            current_traces.insert(&tid, &t);
+            tick_t zero = 0;
+            tick_t* tp = current_ticks.lookup_or_try_init(&tid, &zero);
+            if (tp) {
+                current_ticks.increment(tid);
+                tick = *tp;
+            } else {
+                tick = 0;
+            }
         }
-
+        struct output_trace output = {};
+        output.tick = tick;
+        output.tid = tid;
+        time_t current_time = bpf_ktime_get_ns();
+        output_traces.insert(&output, &current_time);
         return 0;
     }
 
     int on_sample(struct bpf_perf_event_data *ctx) {
         tid_t tid = bpf_get_current_pid_tgid();
-        struct trace* t = current_traces.lookup(&tid);
-        if (!t) {
+        tick_t* tp = current_ticks.lookup(&tid);
+        if (!tp) {
             //ignore sample, not from a tid with a previous trace
             return 0;
         }
         struct sample s = {};
-        s.tick = t->tick;
+        s.tick = *tp;
         s.user_stack_id = stack_traces.get_stackid(&ctx->regs, BPF_F_USER_STACK);
         s.tid = tid;
         bpf_get_current_comm(&s.command, sizeof(s.command));
@@ -113,8 +110,16 @@ def report(b):
                 stack_counts[stack] = count
         except KeyError:
             pass
-    for k, v in sorted(traces.items(), key=lambda kv: kv[0].tick):
-        #print("tick {} tid {} time {}".format(k.tick, k.tid, v.value))
+    traces_sorted = sorted(traces.items(), key=lambda kv: kv[1].value)
+    #print(['tick {} tid {} time {:,}'.format(x[0].tick, x[0].tid, x[1].value)
+        #for x in traces_sorted if x[1].value > 1e9])
+    tick_times.extend([{'tick': k.tick, 'tid': k.tid, 'time': v.value} for k, v in traces.items()])
+    tick_times.sort(key=lambda x: x['time'])
+    try:
+        #print('tick {} tid {} time {:,}'.format(tick_times[0]['tick'], tick_times[0]['tid'], tick_times[0]['time']))
+        #print('tick {} tid {} time {:,}'.format(tick_times[-1]['tick'], tick_times[-1]['tid'], tick_times[-1]['time']))
+        pass
+    except IndexError:
         pass
     samples.clear()
     traces.clear()
