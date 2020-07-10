@@ -28,6 +28,8 @@ def format_stack(b, k, v, stack_traces, need_delimiter = False, annotations = Fa
         [k.kernel_ip] if kernel_stacks and k.kernel_ip else [] + \
         list(stack_traces.walk(k.kernel_stack_id)) if kernel_stacks and k.kernel_stack_id >= 0 else []
 
+    if k.command.startswith(b'AE_Worker'):
+        k.command = b'AE_Worker'
     line = [k.command]
     if user_stacks:
         line += [b.sym(addr, k.tid) for addr in reversed(user_stack)]
