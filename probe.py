@@ -96,8 +96,9 @@ def attach(b, binary, offset):
     )
 
 tick_t = namedtuple('tick', ['tick', 'tid', 'time'])
-stack_counts = {}
 ticks = []
+sample_t = namedtuple('sample', ['stack', 'tick', 'tid'])
+stack_counts = {}
 def report(b):
     samples = b["samples"]
     traces = b["output_traces"]
@@ -105,10 +106,11 @@ def report(b):
     for k, v in samples.items():
         try:
             stack, count = stacks.format_stack(b, k, v, stack_traces)
-            if stack in stack_counts:
-                stack_counts[stack] += count
+            key = sample_t(stack, k.tick, k.tid)
+            if key in stack_counts:
+                stack_counts[key] += count
             else:
-                stack_counts[stack] = count
+                stack_counts[key] = count
         except KeyError:
             pass
     for k, v in traces.items():
@@ -123,14 +125,29 @@ def report(b):
             tick_times.append(tick_t(tick0.tick, tick0.tid, tick1.time - tick0.time))
     tick_times.sort(key=lambda x: (x.time))
     split = int(len(tick_times) * 0.95)
-    good_ticks = tick_times[:split]
-    bad_ticks = tick_times[split:]
-    try:
-        tick = good_ticks[0]
-        print('best     tick {} tid {} time {}'.format(tick.tick, tick.tid, tick.time / 1e9))
-        tick = good_ticks[-1]
-        print('95%      tick {} tid {} time {}'.format(tick.tick, tick.tid, tick.time / 1e9))
-        tick = bad_ticks[-1]
-        print('worst    tick {} tid {} time {}'.format(tick.tick, tick.tid, tick.time / 1e9))
-    except IndexError:
-        pass
+    good_ticks = set([(t.tick, t.tid) for t in tick_times[:split]])
+    bad_ticks = set([(t.tick, t.tid) for t in tick_times[split:]])
+
+    good_samples = {}
+    for k, v in stack_counts.items():
+        if (k.tick, k.tid) in good_ticks:
+            if k.stack in good_samples:
+                good_samples[k.stack] += v
+            else:
+                good_samples[k.stack] = v
+    bad_samples = {}
+    for k, v in stack_counts.items():
+        if (k.tick, k.tid) in bad_ticks:
+            if k.stack in bad_samples:
+                bad_samples[k.stack] += v
+            else:
+                bad_samples[k.stack] = v
+
+    with open('bad-stacks', 'w') as f:
+        f.write(''.join(['{} {}\n'.format(k, v) for k, v in bad_samples.items()]))
+
+    with open('good-stacks', 'w') as f:
+        f.write(''.join(['{} {}\n'.format(k, v) for k, v in bad_samples.items()]))
+
+    print('ticks    goods {} bads {}'.format(len(good_ticks), len(bad_ticks)))
+    print('samples  goods {} bads {}'.format(len(good_samples), len(bad_samples)))
