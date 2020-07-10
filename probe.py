@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import bcc
 import stacks
+from collections import namedtuple
 
 def compile(addresses):
     bpf_text = """
@@ -94,14 +95,14 @@ def attach(b, binary, offset):
         cpu=-1
     )
 
+tick_t = namedtuple('tick', ['tick', 'tid', 'time'])
 stack_counts = {}
-tick_times = []
+ticks = []
 def report(b):
     samples = b["samples"]
     traces = b["output_traces"]
     stack_traces = b["stack_traces"]
     for k, v in samples.items():
-        print("tick {} tid {}".format(k.tick, k.tid))
         try:
             stack, count = stacks.format_stack(b, k, v, stack_traces)
             if stack in stack_counts:
@@ -110,16 +111,26 @@ def report(b):
                 stack_counts[stack] = count
         except KeyError:
             pass
-    traces_sorted = sorted(traces.items(), key=lambda kv: kv[1].value)
-    #print(['tick {} tid {} time {:,}'.format(x[0].tick, x[0].tid, x[1].value)
-        #for x in traces_sorted if x[1].value > 1e9])
-    tick_times.extend([{'tick': k.tick, 'tid': k.tid, 'time': v.value} for k, v in traces.items()])
-    tick_times.sort(key=lambda x: x['time'])
-    try:
-        #print('tick {} tid {} time {:,}'.format(tick_times[0]['tick'], tick_times[0]['tid'], tick_times[0]['time']))
-        #print('tick {} tid {} time {:,}'.format(tick_times[-1]['tick'], tick_times[-1]['tid'], tick_times[-1]['time']))
-        pass
-    except IndexError:
-        pass
+    for k, v in traces.items():
+        ticks.append(tick_t(k.tick, k.tid, v.value))
     samples.clear()
     traces.clear()
+
+    ticks.sort(key=lambda x: (x.tid, x.tick))
+    tick_times = []
+    for tick0, tick1 in zip(ticks[:-1], ticks[1:]):
+        if tick0.tid == tick1.tid and tick0.tick + 1 == tick1.tick:
+            tick_times.append(tick_t(tick0.tick, tick0.tid, tick1.time - tick0.time))
+    tick_times.sort(key=lambda x: (x.time))
+    split = int(len(tick_times) * 0.95)
+    good_ticks = tick_times[:split]
+    bad_ticks = tick_times[split:]
+    try:
+        tick = good_ticks[0]
+        print('best     tick {} tid {} time {}'.format(tick.tick, tick.tid, tick.time / 1e9))
+        tick = good_ticks[-1]
+        print('95%      tick {} tid {} time {}'.format(tick.tick, tick.tid, tick.time / 1e9))
+        tick = bad_ticks[-1]
+        print('worst    tick {} tid {} time {}'.format(tick.tick, tick.tid, tick.time / 1e9))
+    except IndexError:
+        pass
